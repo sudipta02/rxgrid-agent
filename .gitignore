@@ -1,0 +1,11 @@
+node_modules/
+dist/
+cdk.out/
+.next/
+*.log
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+stress-test/raw/
+stress-test/.test-users.json
