@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Annotations, Stack, StackProps, RemovalPolicy, CfnOutput, Duration } from "aws-cdk-lib";
+import { Stack, StackProps, RemovalPolicy, CfnOutput, Duration } from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -19,6 +19,8 @@ export interface SanitizerStackProps extends StackProps {
   userClients: cognito.IUserPoolClient[];
   /** User Gateway MCP endpoint (ToolsStack). */
   userGatewayUrl: string;
+  /** Harness ARN (HarnessStack): the only harness this API invokes. */
+  harnessArn: string;
   /** User Gateway tool names, "<target>___<tool>". */
   createHoldTool: string;
   listHoldsTool: string;
@@ -34,9 +36,9 @@ export interface SanitizerStackProps extends StackProps {
  * response streaming allows up to 15 min (5 min idle on Regional endpoints).
  *
  * The Lambda calls the harness and the User Gateway with the person's own bearer token,
- * so its role needs nothing but the Sessions table. Context:
- *   -c harnessArn=arn:aws:bedrock-agentcore:ap-southeast-2:<acct>:harness/<id>   (required to work)
- *   -c allowedOrigins=https://app.example.com,http://localhost:3000             (CORS)
+ * so its role needs nothing but the Sessions table. The harness ARN comes from HarnessStack.
+ * Context:
+ *   -c allowedOrigins=https://app.example.com,http://localhost:3000   (CORS)
  */
 export class SanitizerStack extends Stack {
   readonly api: apigw.RestApi;
@@ -45,14 +47,7 @@ export class SanitizerStack extends Stack {
     super(scope, id, props);
     const { sessions, userPool, userClients } = props;
 
-    const harnessArn: string =
-      this.node.tryGetContext("harnessArn") ?? `arn:aws:bedrock-agentcore:${this.region}:${this.account}:harness/NOT-YET-CREATED`;
-    if (!this.node.tryGetContext("harnessArn")) {
-      Annotations.of(this).addWarningV2(
-        "rxgrid:harnessArnMissing",
-        "No -c harnessArn=... given: the sanitizer is deployed with a placeholder ARN and every /chat call will fail until it is set.",
-      );
-    }
+    const { harnessArn } = props;
     const allowedOrigins: string[] = String(this.node.tryGetContext("allowedOrigins") ?? "http://localhost:3000")
       .split(",")
       .map((s) => s.trim())

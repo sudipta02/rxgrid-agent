@@ -10,21 +10,26 @@
 //
 // Format (read by infra/lib/tools-stack.ts): each "// @policy <name>: <description>" line
 // starts one AgentCore Policy resource. {{GATEWAY_ARN}} is replaced with this gateway's ARN
-// at synth time; every action must be "<target>___<tool>" for a target this stack creates.
+// and {{HARNESS_PRINCIPAL_ID}} with the harness role's principal id at synth time; every
+// action must be "<target>___<tool>" for a target this stack creates.
 //
 // Default deny: anything not permitted here (any other tool, MCP listing aside) is refused.
 
-// @policy permit_search_inventory: Harness role may call search_inventory with a named drug (C1, R4)
+// @policy permit_search_inventory: Only the harness execution role may call search_inventory with a named drug (C1, R4)
 permit(
   principal is AgentCore::IamEntity,
   action == AgentCore::Action::"rxgrid-search___search_inventory",
   resource == AgentCore::Gateway::"{{GATEWAY_ARN}}"
 ) when {
+  // Only the RxGrid harness (infra/lib/harness-stack.ts, role rxgrid-harness-execution).
+  // {{HARNESS_PRINCIPAL_ID}} = arn:aws:sts::<account>:assumed-role/rxgrid-harness-execution.
+  // AWS documents IamEntity.id as the assumed-role ARN WITHOUT a session name; the `like`
+  // arm also accepts the form with one, so a docs/runtime mismatch fails neither way.
+  // VERIFY in a LOG_ONLY trace before ENFORCE.
+  (principal.id == "{{HARNESS_PRINCIPAL_ID}}" ||
+   principal.id like "{{HARNESS_PRINCIPAL_ID}}/*") &&
   // R4: no empty or wildcard queries. The Lambda also requires >= 3 characters
   // (Cedar has no string length operator).
   context.input.drug != "" &&
   context.input.drug != "*"
 };
-// TODO after the harness exists: narrow the principal to the harness execution role, e.g.
-//   principal.id like "arn:aws:sts::<account>:assumed-role/<harness-role-name>/*"
-// Check the exact principal.id format in a LOG_ONLY trace first.

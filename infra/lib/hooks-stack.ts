@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Stack, StackProps, RemovalPolicy, CfnOutput, Duration } from "aws-cdk-lib";
 import * as bedrock from "aws-cdk-lib/aws-bedrock";
+import type * as agentcore from "aws-cdk-lib/aws-bedrockagentcore";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
@@ -29,13 +30,19 @@ export interface HooksStackProps extends StackProps {
  *   result-guard  after_tool_call    tool-result guardrail (prompt attack) on tool output
  *
  * The harness execution role invokes these synchronously. Same account, so the harness
- * role needs only an identity policy (lambda:InvokeFunction on the three ARNs output here);
- * no Lambda resource policy is added. Configure every hook with failureMode "deny".
+ * role needs only an identity policy (lambda:InvokeFunction on the three ARNs exposed as
+ * `hookFunctionArns`); no Lambda resource policy is added. `harnessHooks` is the ready
+ * harness config, every hook with failureMode "deny".
  *
  * Guardrails use the CLASSIC tier on purpose: the STANDARD tier requires cross-Region
  * inference, and this project's SCP denies every Region except ap-southeast-2.
  */
 export class HooksStack extends Stack {
+  /** The harness `hooks` list (failureMode deny, 10 s timeout). HarnessStack uses it as-is. */
+  readonly harnessHooks: agentcore.CfnHarness.HarnessHookProperty[];
+  /** ARNs of the three hook Lambdas: the harness execution role may invoke exactly these. */
+  readonly hookFunctionArns: string[];
+
   constructor(scope: Construct, id: string, props: HooksStackProps) {
     super(scope, id, props);
     const { sessions, dailyUsage } = props;
@@ -140,18 +147,17 @@ export class HooksStack extends Stack {
     new CfnOutput(this, "InputGuardrailVersion", { value: input.version });
     new CfnOutput(this, "ToolResultGuardrailId", { value: toolResult.id });
     new CfnOutput(this, "ToolResultGuardrailVersion", { value: toolResult.version });
-    // Paste into the harness config (CreateHarness/UpdateHarness `hooks`). The harness
-    // execution role needs lambda:InvokeFunction on the three ARNs above.
-    const target = (fn: lambda.IFunction) => ({
+    // The harness execution role (HarnessStack) gets lambda:InvokeFunction on exactly these ARNs.
+    const target = (fn: lambda.IFunction): agentcore.CfnHarness.HarnessHookTargetProperty => ({
       lambda: { arn: fn.functionArn, timeoutSeconds: HOOK_TIMEOUT_SECONDS, failureMode: "deny" },
     });
-    new CfnOutput(this, "HarnessHooksConfig", {
-      value: this.toJsonString([
-        { beforeInvocation: { name: "rxgrid_input_guard", target: target(inputGuard.fn) } },
-        { beforeToolCall: { name: "rxgrid_tool_cap", target: target(toolCap.fn) } },
-        { afterToolCall: { name: "rxgrid_result_guard", target: target(resultGuard.fn) } },
-      ]),
-    });
+    this.harnessHooks = [
+      { beforeInvocation: { name: "rxgrid_input_guard", target: target(inputGuard.fn) } },
+      { beforeToolCall: { name: "rxgrid_tool_cap", target: target(toolCap.fn) } },
+      { afterToolCall: { name: "rxgrid_result_guard", target: target(resultGuard.fn) } },
+    ];
+    this.hookFunctionArns = [inputGuard.fn, toolCap.fn, resultGuard.fn].map((f) => f.functionArn);
+    new CfnOutput(this, "HarnessHooksConfig", { value: this.toJsonString(this.harnessHooks) });
   }
 
   /**

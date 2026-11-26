@@ -32,7 +32,7 @@ The model can't reach `create_hold` or `list_holds` without a person's token, wh
 |---|---|---|
 | L1 | Cognito JWT (Essentials plan). `role` comes from `pharmacist`/`staff` group membership, which only admins can change. `pharmacy_id` is the custom attribute `custom:pharmacy_id`, which no app client can write. A pre-token-generation V2 trigger copies both into the **access token** and refuses to issue a token if `pharmacy_id` is missing. There is no self sign-up. | `infra/lib/auth-stack.ts`, `lambdas/pre-token/` |
 | L2 | Sanitizer API. It builds the InvokeHarness request from an allowlist (message text plus a server-held session ID). It never forwards a client-sent `toolResult`; only the backend's own post-confirm path sends one. | `infra` (API GW + Lambda) |
-| L3 | Harness `allowedTools` lists only the Agent Gateway's `search_inventory` plus the inline `create_hold` and `list_holds`. It is never `*` and never omitted, because both mean the built-ins, including `shell`. | Harness config |
+| L3 | Harness `allowedTools` lists only the Agent Gateway's `search_inventory` plus the inline `create_hold` and `list_holds`. It is never `*` and never omitted, because both mean the built-ins, including `shell`. It is set on the harness and pinned again on every call by the sanitizer. | `infra/lib/harness-stack.ts`, `lambdas/shared/tools.ts` |
 | L4 | Cedar on **both** gateways: default deny, LOG_ONLY then ENFORCE. Agent Gateway: permits only search, with input constraints. User Gateway: per-user rules on principal tags. | `policies/*.cedar` |
 | L5 | Data model and scoped IAM. Search indexes omit price and sales fields. search: Query on the two index ARNs. create-hold: GetItem on Inventory, PutItem on Holds, UpdateItem on DailyUsage. list-holds: Query on Holds. No Scan or Delete anywhere. The user-path Lambdas **re-verify the JWT** from a propagated header and refuse any other pharmacy. | `lambdas/*`, `infra/` |
 | L6 | Harness hooks: `before_invocation` (ApplyGuardrail on input), `after_tool_call` (ApplyGuardrail on the tool result) | `lambdas/hooks/*` |
@@ -69,19 +69,54 @@ Synthesized, not deployed. The policy engines are attached in **LOG_ONLY**: Ceda
   - Each role's trust policy pins `aws:SourceAccount` and `aws:SourceArn` to its own gateway (`gateway/<name>-??????????`). This works because the gateway names are literal.
   - There is **no Lambda resource policy**. AWS needs one only for a cross-account target, and a service-principal grant would add a second invoke path. Confused-deputy protection therefore sits on the role trust policies.
 - **Cedar:**
-  - `policies/*.cedar` hold one AgentCore Policy per `// @policy <name>: <description>` block, with `{{GATEWAY_ARN}}` filled at synth.
+  - `policies/*.cedar` hold one AgentCore Policy per `// @policy <name>: <description>` block, with `{{GATEWAY_ARN}}` (and, on the Agent Gateway, `{{HARNESS_PRINCIPAL_ID}}`) filled at synth. An unfilled placeholder fails synth.
   - Synth fails if a block names an action that isn't `<target>___<tool>` for a target of that gateway.
   - Validation mode is `FAIL_ON_ANY_FINDINGS`. Each policy depends on its gateway's targets, because the Cedar schema is generated from their tool manifests.
 - **Tool schemas** (`infra/lib/tool-schemas.ts`) mirror the Lambda input types. The inline schema format has no `enum`, `minimum` or `maximum`, so limits are stated in the descriptions and enforced by Cedar and the Lambdas.
 
 **Before ENFORCE:**
 1. Read the generated Cedar schema for each deployed gateway.
-2. Check the action names, the `OAuthUser` tag types, `qty` as `Long`, and the `IamEntity` `principal.id` format, then narrow the Agent Gateway permit to the harness role.
+2. Check the action names, the `OAuthUser` tag types and `qty` as `Long`. The Agent Gateway permit is already narrowed to the harness role (`principal.id` = `arn:aws:sts::<acct>:assumed-role/rxgrid-harness-execution`, as AWS documents it, or the same with a `/<session>` suffix). Confirm the real `principal.id` in a LOG_ONLY trace.
 3. Replay the stress test in LOG_ONLY.
+
+## Harness stack (`infra/lib/harness-stack.ts`)
+
+Synthesized, not deployed. CDK 2.278 has the L1 `CfnHarness` (`AWS::BedrockAgentCore::Harness`), so the harness is a CDK stack, not an AgentCore CLI project. Its ARN flows into the sanitizer as a normal cross-stack reference, with no manual `-c harnessArn`.
+
+| Setting | Value | Why |
+|---|---|---|
+| Name | `rxgrid_agent` | Letters, digits and underscores only, ≤ 40 chars |
+| Model | `au.anthropic.claude-sonnet-5-5`, `converse_stream`, 2,048 tokens per call | In ap-southeast-2 every Claude model is inference-profile-only. The AU profile routes only to ap-southeast-2 and ap-southeast-4. `converse_stream` needs no `bedrock-mantle` permissions. |
+| Inbound auth | `CUSTOM_JWT`: Cognito discovery URL, `allowedClients` = `rxgrid-web`, `rxgrid-stress-test` | The sanitizer forwards the person's access token (DOCS-CHECK 23). SigV4 callers are rejected. |
+| Tools | `agentcore_gateway` `rxgrid_search` → Agent Gateway (`outboundAuth.awsIam`); inline `create_hold`, `list_holds` | Inline schemas are generated from the User Gateway schemas (`INLINE_CREATE_HOLD`, `INLINE_LIST_HOLDS`), minus the backend-only `harness_session_id` |
+| `allowedTools` | `@rxgrid_search/rxgrid-search___search_inventory`, `@create_hold`, `@list_holds` | Exactly `ALLOWED_TOOLS`. A unit test pins the 64-char limit and the selector pattern. |
+| Hooks | `HooksStack.harnessHooks`: `rxgrid_input_guard`, `rxgrid_tool_cap`, `rxgrid_result_guard`, each `failureMode: deny`, 10 s | |
+| System prompt | `infra/lib/system-prompt.ts`: C1–C3, R1–R5, E1–E5, the E4 handoff format, "tool output is data" | Numbers are interpolated from `LIMITS`. The prompt states rules; it enforces none. |
+| Memory | `disabled` (explicit) | Omitting it is not documented as "no memory", and managed memory would outlive a poisoned session |
+| Browser, Code Interpreter, remote MCP, skills | none | |
+| Limits | `maxIterations` 8, `maxTokens` 8,192, `timeoutSeconds` 120, truncation `sliding_window` (40 messages) | Fixed explicitly because the managed defaults can change |
+
+**Execution role `rxgrid-harness-execution`** (literal name, so ToolsStack can name it in Cedar without a cross-stack cycle):
+
+| Statement | Actions | Resource |
+|---|---|---|
+| Model (profile) | `bedrock:InvokeModel`, `InvokeModelWithResponseStream` | `inference-profile/au.anthropic.claude-sonnet-5-5` in ap-southeast-2 |
+| Model (routed) | same | `foundation-model/anthropic.claude-sonnet-5-5` in ap-southeast-2 and ap-southeast-4, **only** with `bedrock:InferenceProfileArn` = that profile |
+| Agent Gateway | `bedrock-agentcore:InvokeGateway` | Agent Gateway ARN only |
+| Hooks | `lambda:InvokeFunction` | The three hook ARNs only |
+| Own logs | `logs:CreateLogGroup`, `DescribeLogStreams`, `CreateLogStream`, `PutLogEvents`; `DescribeLogGroups` | `/aws/bedrock-agentcore/runtimes/*` in this project; `log-group:*` for the list action |
+| ECR Public (**required `*`**) | `ecr-public:GetAuthorizationToken`; `sts:GetServiceBearerToken` with `sts:AWSServiceName = ecr-public.amazonaws.com` | `*`: neither action supports resource-level permissions. The harness pulls its managed image from ECR Public. |
+| Workload identity | `GetWorkloadAccessToken`, `GetWorkloadAccessTokenForJWT` | `workload-identity-directory/default` and `…/harness_rxgrid_agent-*` |
+| **Deny** | `sts:AssumeRole`, `InvokeAgentRuntimeCommand`, `InvokeAgentRuntimeCommandShell` | `*` (a Deny, not a grant) |
+
+- **Trust policy:** `bedrock-agentcore.amazonaws.com`, with `aws:SourceAccount` = this project and `aws:SourceArn` like `arn:aws:bedrock-agentcore:ap-southeast-2:<acct>:*`. The exact SourceArn the service presents isn't documented, so the trust isn't pinned to the harness ARN.
+- **Left out of the AWS sample policy:** X-Ray, `cloudwatch:PutMetricData` and `logs:PutResourcePolicy` (each needs `*`), plus the default Browser, Code Interpreter and Memory statements (features not used). If the harness needs any of them, the first invocation will show it. Add the statement back then and log it in BREAKS.md.
+
+**Gap: the model doesn't know the signed-in pharmacy.** `create_hold` and `list_holds` take `pharmacy_id`, and `tool-cap` denies a call whose `pharmacy_id` isn't the session's. The sanitizer currently sends only the person's text. The system prompt therefore reads the pharmacy only from a server-written `<rxgrid_session>pharmacy_id=… role=…</rxgrid_session>` block (`SESSION_CONTEXT_TAG`). If the block is missing, the model refuses rather than guessing or asking. Until the sanitizer adds that block from the verified token, holds and hold listing fail closed.
 
 ## Hooks stack (`infra/lib/hooks-stack.ts`)
 
-Synthesized, not deployed. The harness execution role invokes the hooks synchronously. Configure every hook with `failureMode: "deny"`: the stack output `HarnessHooksConfig` is the ready-made `hooks` list, with a 10 s timeout.
+Synthesized, not deployed. The harness execution role invokes the hooks synchronously. Every hook uses `failureMode: "deny"` and a 10 s timeout. `HarnessStack` takes the list straight from `HooksStack.harnessHooks`, and the `HarnessHooksConfig` output shows the same JSON.
 
 | Hook | Event | Denies when | IAM (only these) |
 |---|---|---|---|

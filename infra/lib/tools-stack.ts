@@ -13,6 +13,7 @@ import { Construct } from "constructs";
 import { INDEXES } from "../../lambdas/shared/schema.js";
 import { USER_TOKEN_HEADER } from "../../lambdas/shared/caller.js";
 import { CREATE_HOLD_TOOL, LIST_HOLDS_TOOL, SEARCH_TOOL, TARGETS, gatewayToolName } from "./tool-schemas.js";
+import { HARNESS_ROLE_NAME } from "./harness-stack.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, "../..");
@@ -180,7 +181,13 @@ export class ToolsStack extends Stack {
     }
 
     // ------------------------------------------------------------- Cedar policies (L4)
-    this.addCedarPolicies(agentEngine, this.agentGateway, "agent-gateway.cedar", [searchTarget], [TARGETS.search]);
+    // The harness execution role as Cedar sees it: AgentCore::IamEntity id is the
+    // assumed-role ARN without a session name (policy-core-concepts). Built from the
+    // literal role name, so this stack does not depend on HarnessStack (no cycle).
+    const harnessPrincipalId = `arn:${this.partition}:sts::${this.account}:assumed-role/${HARNESS_ROLE_NAME}`;
+    this.addCedarPolicies(agentEngine, this.agentGateway, "agent-gateway.cedar", [searchTarget], [TARGETS.search], {
+      HARNESS_PRINCIPAL_ID: harnessPrincipalId,
+    });
     this.addCedarPolicies(
       userEngine,
       this.userGateway,
@@ -242,8 +249,9 @@ export class ToolsStack extends Stack {
 
   /**
    * One AgentCore Policy per "// @policy <name>: <description>" block of a policies/*.cedar
-   * file, with {{GATEWAY_ARN}} replaced by the gateway's ARN. Fails synth if a block names
-   * an action that is not "<target>___<tool>" for a target of this gateway.
+   * file, with {{GATEWAY_ARN}} replaced by the gateway's ARN and any other {{NAME}} by
+   * `vars[NAME]`. Fails synth if a block names an action that is not "<target>___<tool>"
+   * for a target of this gateway, or leaves a placeholder unfilled.
    */
   private addCedarPolicies(
     engine: agentcore.PolicyEngine,
@@ -251,6 +259,7 @@ export class ToolsStack extends Stack {
     file: string,
     targets: agentcore.GatewayTarget[],
     tools: { target: string; tool: string }[],
+    vars: Record<string, string> = {},
   ) {
     const known = new Set(tools.map(gatewayToolName));
     for (const p of parseCedarFile(path.join(repoRoot, "policies", file))) {
@@ -263,9 +272,9 @@ export class ToolsStack extends Stack {
       const policy = engine.addPolicy(p.name, {
         policyName: p.name,
         description: `DRAFT (LOG_ONLY): ${p.description}`,
-        // Raw Cedar is trusted input here: it comes from this repo, and the only
-        // substituted value is the gateway ARN from CloudFormation.
-        statement: agentcore.PolicyStatement.fromCedar(p.statement.split("{{GATEWAY_ARN}}").join(gateway.gatewayArn)),
+        // Raw Cedar is trusted input here: it comes from this repo, and the substituted
+        // values are the gateway ARN and the harness role's principal id (both ours).
+        statement: agentcore.PolicyStatement.fromCedar(fillPlaceholders(p.statement, { ...vars, GATEWAY_ARN: gateway.gatewayArn }, `${file} ${p.name}`)),
         validationMode: agentcore.PolicyValidationMode.FAIL_ON_ANY_FINDINGS,
       });
       // The Cedar schema is generated from the targets' tool manifests, so validation
@@ -273,6 +282,15 @@ export class ToolsStack extends Stack {
       for (const t of targets) policy.node.addDependency(t);
     }
   }
+}
+
+/** Replace every {{NAME}} with vars[NAME]; throw on a placeholder with no value. */
+export function fillPlaceholders(text: string, vars: Record<string, string>, where: string): string {
+  return text.replace(/\{\{([A-Z_]+)\}\}/g, (_, name: string) => {
+    const v = vars[name];
+    if (v === undefined) throw new Error(`${where}: no value for {{${name}}}`);
+    return v;
+  });
 }
 
 export interface CedarBlock {

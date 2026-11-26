@@ -121,6 +121,49 @@ export const CREATE_HOLD_TOOL: agentcore.ToolDefinition = {
   },
 };
 
+/** JSON Schema (plain object) for a CfnHarness inline function `inputSchema`. */
+export interface JsonSchema {
+  type: string;
+  description?: string;
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+  required?: string[];
+}
+
+/** Render an L2 SchemaDefinition (whose `type` is a SchemaDefinitionType object) as plain JSON Schema. */
+export function toJsonSchema(def: agentcore.SchemaDefinition): JsonSchema {
+  const out: JsonSchema = { type: def.type.value };
+  if (def.description) out.description = def.description;
+  if (def.properties) {
+    out.properties = Object.fromEntries(Object.entries(def.properties).map(([k, v]) => [k, toJsonSchema(v)]));
+  }
+  if (def.items) out.items = toJsonSchema(def.items);
+  if (def.required) out.required = [...def.required];
+  return out;
+}
+
+/** Fields of CreateHoldInput that only the app backend sets; the model never sees them. */
+const BACKEND_ONLY_HOLD_FIELDS = ["harness_session_id"] as const;
+
+/**
+ * Harness inline function `create_hold` (CreateHoldInput minus backend-only fields). It does
+ * NOT place a hold: the harness hands the call to the sanitizer, the UI shows Confirm, and
+ * only then does the backend call the User Gateway tool with the person's token.
+ */
+export const INLINE_CREATE_HOLD = {
+  description:
+    "Ask the signed-in person to confirm a hold request in the RxGrid app. This does not place the hold by itself: " +
+    "the app shows a Confirm dialog and places it only if the person clicks Confirm. " +
+    `One request at a time, at most ${LIMITS.maxUnitsPerHold} units and INR ${LIMITS.maxInrPerHold}. Never split a request to fit a limit. ` +
+    "Use values from a search_inventory result row; pharmacy_id is the signed-in pharmacy from the RxGrid session context.",
+  inputSchema: (() => {
+    const s = toJsonSchema(CREATE_HOLD_TOOL.inputSchema);
+    for (const f of BACKEND_ONLY_HOLD_FIELDS) delete s.properties![f];
+    s.required = s.required!.filter((r) => !(BACKEND_ONLY_HOLD_FIELDS as readonly string[]).includes(r));
+    return s;
+  })(),
+};
+
 export const LIST_HOLDS_TOOL: agentcore.ToolDefinition = {
   name: TARGETS.listHolds.tool,
   description:
@@ -133,4 +176,10 @@ export const LIST_HOLDS_TOOL: agentcore.ToolDefinition = {
     },
     required: ["pharmacy_id"],
   },
+};
+
+/** Harness inline function `list_holds`: the sanitizer runs it with the person's token. */
+export const INLINE_LIST_HOLDS = {
+  description: LIST_HOLDS_TOOL.description + " pharmacy_id is the signed-in pharmacy from the RxGrid session context.",
+  inputSchema: toJsonSchema(LIST_HOLDS_TOOL.inputSchema),
 };

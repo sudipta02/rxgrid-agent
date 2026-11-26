@@ -7,12 +7,14 @@ Status as of 2026-11-26: ✅ done · 🟡 partly done · ⬜ not started.
 
 The job: find a medicine in partner pharmacies and place a hold request within limits, for a human to confirm.
 
-- 🟡 Data, auth, tools, hooks and sanitizer stacks written and synthesized (`RxGrid-Data`, `-Auth`, `-Tools`, `-Hooks`, `-Sanitizer`). **Not deployed.**
-- ⬜ Harness defined (AgentCore CLI): model, system prompt, `allowedTools` = `search_inventory` + inline `create_hold`, `list_holds` (never `*`, never omitted)
+- 🟡 Data, auth, tools, hooks, harness and sanitizer stacks written and synthesized (`RxGrid-Data`, `-Auth`, `-Tools`, `-Hooks`, `-Harness`, `-Sanitizer`). **Not deployed.**
+- 🟡 Harness defined in CDK (`RxGrid-Harness`, `CfnHarness`): `au.anthropic.claude-sonnet-5-5`, CUSTOM_JWT (Cognito, both clients), system prompt with every rule, `allowedTools` = `search_inventory` + inline `create_hold`, `list_holds` (never `*`, never omitted), three hooks, memory disabled, own least-privilege role. Synthesized. **Not deployed.**
+- ⬜ Sanitizer adds the server-written `<rxgrid_session>` block (pharmacy_id, role from the verified token). Until it does, the model can't fill `pharmacy_id`, so holds and hold listing fail closed (ARCHITECTURE.md, Harness stack).
 - 🟡 Hooks stack: `input-guard`, `tool-cap`, `result-guard` Lambdas + 2 CLASSIC guardrails. Written, unit-tested and synthesized (`RxGrid-Hooks`). **Not deployed.**
-- 🟡 Sanitizer API: REST + Cognito + streaming Lambda (`/sessions`, `/chat`, `/confirm`). Written, unit-tested and synthesized (`RxGrid-Sanitizer`). **Not deployed**; needs `-c harnessArn=…`.
+- 🟡 Sanitizer API: REST + Cognito + streaming Lambda (`/sessions`, `/chat`, `/confirm`). Written, unit-tested and synthesized (`RxGrid-Sanitizer`). **Not deployed.** Takes the harness ARN from `RxGrid-Harness`.
 - ⬜ Next.js UI: chat + Confirm dialog + client-side output guardrail
 - ⬜ Deploy (ask first: billable) → seed data (`npm run seed`) + test users (`npm run seed:users`)
+- ⬜ Post-deploy VERIFY items: DOCS-CHECK 22, 32, 34, 37
 - ⬜ End-to-end run: search → ambiguous ask → hold → Confirm → hold appears in `list_holds`
 
 ## 2. Written rule set in plain language [REQ]

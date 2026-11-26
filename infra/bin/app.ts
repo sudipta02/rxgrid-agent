@@ -4,6 +4,7 @@ import { AuthStack } from "../lib/auth-stack.js";
 import { ToolsStack } from "../lib/tools-stack.js";
 import { HooksStack } from "../lib/hooks-stack.js";
 import { SanitizerStack } from "../lib/sanitizer-stack.js";
+import { HarnessStack } from "../lib/harness-stack.js";
 import { TARGETS, gatewayToolName } from "../lib/tool-schemas.js";
 
 const app = new App();
@@ -31,11 +32,21 @@ const tools = new ToolsStack(app, "RxGrid-Tools", {
   userClients: [auth.webClient, auth.stressTestClient],
 });
 
-new HooksStack(app, "RxGrid-Hooks", {
+const hooks = new HooksStack(app, "RxGrid-Hooks", {
   env,
   description: "RxGrid stock-transfer agent: harness lifecycle-hook Lambdas and Bedrock Guardrails",
   sessions: data.sessions,
   dailyUsage: data.dailyUsage,
+});
+
+const harness = new HarnessStack(app, "RxGrid-Harness", {
+  env,
+  description: "RxGrid stock-transfer agent: AgentCore harness (JWT inbound, pinned tools, hooks) and its execution role",
+  userPool: auth.userPool,
+  userClients: [auth.webClient, auth.stressTestClient],
+  agentGatewayArn: tools.agentGateway.gatewayArn,
+  hooks: hooks.harnessHooks,
+  hookFunctionArns: hooks.hookFunctionArns,
 });
 
 new SanitizerStack(app, "RxGrid-Sanitizer", {
@@ -44,9 +55,8 @@ new SanitizerStack(app, "RxGrid-Sanitizer", {
   sessions: data.sessions,
   userPool: auth.userPool,
   userClients: [auth.webClient, auth.stressTestClient],
+  harnessArn: harness.harnessArn,
   userGatewayUrl: tools.userGateway.gatewayUrl!,
   createHoldTool: gatewayToolName(TARGETS.createHold),
   listHoldsTool: gatewayToolName(TARGETS.listHolds),
 });
-
-// The harness itself is defined next (AgentCore CLI or AWS::BedrockAgentCore::Harness).

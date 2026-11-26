@@ -6,9 +6,9 @@ Build an agent on the **Amazon Bedrock AgentCore managed harness** that does one
 Submission must include: working agent, plain-language rule set, how each rule is enforced + architecture diagram, stress test (≥5 adversarial prompts incl. prompt injection) with results, build log of rules that broke and fixes, public repo, screenshots.
 
 ## Stack
-- AgentCore harness (config-defined agent), AgentCore CLI + CDK in **TypeScript**
+- AgentCore harness (config-defined agent), defined in CDK **TypeScript** as `AWS::BedrockAgentCore::Harness` (`CfnHarness`, `infra/lib/harness-stack.ts`), not with the AgentCore CLI
 - Region: ap-southeast-2 (Sydney). This is required, not a preference: the AWS project (new AWS experience) is locked to one Region by an org SCP, and every other Region returns an explicit deny. AWS CLI profile: `rxgrid`.
-- Model: Claude on Bedrock
+- Model: Claude Sonnet 5.5 on Bedrock via the AU geographic inference profile `au.anthropic.claude-sonnet-5-5` (routes to ap-southeast-2 and ap-southeast-4 only). Claude has no in-Region on-demand option here. The project SCP exempts `bedrock:InvokeModel*` from its Region restriction (DOCS-CHECK item 31).
 - Tools served via **two AgentCore Gateways** (Lambda targets, TypeScript). See docs/ARCHITECTURE.md:
   - **Agent Gateway** (inbound AWS_IAM; the harness signs requests with its own execution role): `search_inventory` only.
   - **User Gateway** (inbound CUSTOM_JWT, Cognito): `list_holds` and `create_hold`. Only the UI backend calls it, with the signed-in person's access token.
@@ -34,10 +34,10 @@ EDGE CASES: ambiguous drug → ask; substitutes only same salt+strength and flag
    - The harness has JWT inbound auth, so the sanitizer calls `POST /harnesses/invoke` over HTTPS with the person's own bearer token. The JS SDK only does SigV4, which a JWT harness rejects.
    - Builds the request from an allowlist (message text + server-held session ID + pinned `allowedTools`) rather than stripping a denylist. Unknown body fields are refused with 400. Per-call overrides it never forwards: `tools`, `skills`, `model` (`modelId`, `apiBase`, `additionalParams`), `systemPrompt`, `actorId`, `maxIterations`, `maxTokens`, `timeoutSeconds`, `runtimeUserId`, `qualifier`.
    - Never forwards a client-sent `toolResult`; only the backend's post-confirm path sends one. The server already rejects `toolUse` blocks.
-3. **`allowedTools`** lists only `search_inventory` plus the inline `create_hold` and `list_holds`.
+3. **`allowedTools`** lists only `search_inventory` plus the inline `create_hold` and `list_holds` (`ALLOWED_TOOLS` in `lambdas/shared/tools.ts`, set on the harness and pinned again on every call by the sanitizer).
    - Never `["*"]` and never omitted: both resolve to the built-ins, including `shell` and file read/write.
 4. **Cedar on both gateways**: default deny, forbid wins.
-   - Agent Gateway: permit only `search_inventory`, with input constraints.
+   - Agent Gateway: permit only `search_inventory`, only for the harness execution role (`rxgrid-harness-execution`, `{{HARNESS_PRINCIPAL_ID}}`), with input constraints.
    - User Gateway: qty > 50 forbidden; H1/X only if `principal.getTag("role") == "pharmacist"`; input `pharmacy_id` must equal the principal's `pharmacy_id` tag.
    - Policies must name the specific gateway ARN: `{{GATEWAY_ARN}}` in `policies/*.cedar`, filled by CDK at synth.
    - Actions are `<target>___<tool>`: `rxgrid-search___search_inventory`, `rxgrid-create-hold___create_hold`, `rxgrid-list-holds___list_holds`.
@@ -68,7 +68,7 @@ Run twice: **baseline** (prompt-only, no policy/hooks) vs **layered**. Compare s
 
 ## Repo layout
 ```
-infra/        CDK (AgentCore CLI project)
+infra/        CDK app: Data, Auth, Tools, Hooks, Harness, Sanitizer stacks
 lambdas/      shared/ (schema, gateway helpers, caller JWT check), search-inventory, list-holds,
               create-hold, pre-token, hooks/{input-guard,tool-cap,result-guard}
 policies/     *.cedar (agent-gateway, user-gateway)
