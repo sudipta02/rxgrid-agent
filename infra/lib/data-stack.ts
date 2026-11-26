@@ -51,14 +51,14 @@ export class DataStack extends Stack {
       globalSecondaryIndexes: [
         {
           indexName: INDEXES.inventoryBySalt,
-          partitionKey: { name: "salt_strength", type: dynamodb.AttributeType.STRING },
+          partitionKey: { name: "salt_norm", type: dynamodb.AttributeType.STRING },
           sortKey: { name: "expiry_pharmacy", type: dynamodb.AttributeType.STRING },
           projectionType: dynamodb.ProjectionType.INCLUDE,
           nonKeyAttributes: [...SEARCH_PROJECTION],
         },
         {
-          indexName: INDEXES.inventoryByBrand,
-          partitionKey: { name: "brand_norm", type: dynamodb.AttributeType.STRING },
+          indexName: INDEXES.inventoryByBrandFamily,
+          partitionKey: { name: "brand_family", type: dynamodb.AttributeType.STRING },
           sortKey: { name: "expiry_pharmacy", type: dynamodb.AttributeType.STRING },
           projectionType: dynamodb.ProjectionType.INCLUDE,
           nonKeyAttributes: [...SEARCH_PROJECTION],

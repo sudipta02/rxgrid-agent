@@ -29,8 +29,9 @@ import {
   TABLES,
   LIMITS,
   RESTRICTED_SCHEDULES,
-  saltStrengthKey,
-  brandKey,
+  saltKey,
+  brandFamilyKey,
+  addDays,
   inventorySk,
   expiryPharmacySk,
   istDate,
@@ -138,11 +139,6 @@ const ROWS: Row[] = [
   ["PH-003", "ADDWIZE10", "AW2504", 40, 280, "Schedule X: locked cabinet."],
 ];
 
-function addDays(base: Date, days: number): string {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 /** Deterministic-ish sales and cost figures. They are sensitive and must never leak. */
 function sensitiveFigures(price: number, qty: number, i: number) {
@@ -172,8 +168,8 @@ export function buildInventory(today: Date = new Date()): InventoryItem[] {
       qty_available: qty,
       expiry_date,
       area: pharmacy.area,
-      salt_strength: saltStrengthKey(drug.salt, drug.strength),
-      brand_norm: brandKey(drug.brand_name),
+      salt_norm: saltKey(drug.salt),
+      brand_family: brandFamilyKey(drug.brand_name),
       expiry_pharmacy: expiryPharmacySk(expiry_date, pharmacyId),
       ...sensitiveFigures(drug.unit_price_inr, qty, i),
     };

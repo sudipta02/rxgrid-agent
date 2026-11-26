@@ -47,11 +47,18 @@ export const TABLES = {
 } as const;
 
 export const INDEXES = {
-  /** Inventory GSI: search by normalised salt + strength. */
-  inventoryBySalt: "BySaltStrength",
-  /** Inventory GSI: search by normalised brand name (resolves brand → salt). */
-  inventoryByBrand: "ByBrand",
+  /** Inventory GSI: every stock row of a salt (e.g. "paracetamol"), across strengths and brands. */
+  inventoryBySalt: "BySalt",
+  /**
+   * Inventory GSI: every stock row of a brand family (first word of the brand, e.g.
+   * "glycomet" covers Glycomet 500 and Glycomet 1g). An exact-brand index could not
+   * detect that "Glycomet" is ambiguous (rule E1).
+   */
+  inventoryByBrandFamily: "ByBrandFamily",
 } as const;
+
+/** Most stock rows the search tool ever returns (rule R4: no bulk export). */
+export const MAX_SEARCH_RESULTS = 20;
 
 /**
  * Attributes projected into both Inventory search GSIs (INCLUDE projection). Table and
@@ -60,6 +67,7 @@ export const INDEXES = {
  */
 export const SEARCH_PROJECTION = [
   "drug_id",
+  "batch",
   "brand_name",
   "salt",
   "strength",
@@ -77,12 +85,19 @@ export const SENSITIVE_INVENTORY_ATTRS = ["unit_price_inr", "unit_cost_inr", "sa
 // ---------------------------------------------------------------------------
 // Key builders
 // ---------------------------------------------------------------------------
-/** "Paracetamol " + "500 mg" → "paracetamol|500mg" */
-export function saltStrengthKey(salt: string, strength: string): string {
-  return `${norm(salt)}|${norm(strength)}`;
+/** "Amoxicillin + Clavulanic Acid" → "amoxicillin+clavulanicacid" */
+export function saltKey(salt: string): string {
+  return norm(salt);
 }
-export function brandKey(brand: string): string {
-  return norm(brand);
+/** First word of the brand: "Dolo 650" → "dolo", "Taxim-O 200" → "taxim-o". */
+export function brandFamilyKey(brandOrQuery: string): string {
+  return norm(brandOrQuery.trim().split(/\s+/)[0] ?? "");
+}
+/** "500 mg" → "500mg", "1 g" / "1g" → "1000mg", "100 IU/ml" → "100iu/ml". */
+export function normStrength(strength: string): string {
+  const s = norm(strength);
+  const grams = /^(\d+(?:\.\d+)?)g$/.exec(s);
+  return grams ? `${Number(grams[1]) * 1000}mg` : s;
 }
 export function inventorySk(drugId: string, batch: string): string {
   return `DRUG#${drugId}#BATCH#${batch}`;
@@ -91,8 +106,15 @@ export function inventorySk(drugId: string, batch: string): string {
 export function expiryPharmacySk(expiryDate: string, pharmacyId: string): string {
   return `${expiryDate}#${pharmacyId}`;
 }
-function norm(s: string): string {
+export function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "").trim();
+}
+
+/** YYYY-MM-DD that is `days` after `d` (UTC calendar arithmetic). */
+export function addDays(d: Date, days: number): string {
+  const x = new Date(d);
+  x.setUTCDate(x.getUTCDate() + days);
+  return x.toISOString().slice(0, 10);
 }
 
 /** Calendar date in India Standard Time (UTC+5:30), YYYY-MM-DD. Daily caps reset at IST midnight. */
@@ -117,8 +139,8 @@ export interface PharmacyItem {
 /**
  * RxGrid-Inventory. One row per (pharmacy, drug, batch).
  * PK: pharmacy_id   SK: "DRUG#<drug_id>#BATCH#<batch>"
- * GSI BySaltStrength: PK salt_strength, SK expiry_pharmacy
- * GSI ByBrand:        PK brand_norm,    SK expiry_pharmacy
+ * GSI BySalt:        PK salt_norm,    SK expiry_pharmacy
+ * GSI ByBrandFamily: PK brand_family, SK expiry_pharmacy
  */
 export interface InventoryItem {
   pharmacy_id: string;
@@ -142,8 +164,8 @@ export interface InventoryItem {
    */
   notes?: string;
   // GSI keys
-  salt_strength: string;
-  brand_norm: string;
+  salt_norm: string;
+  brand_family: string;
   expiry_pharmacy: string;
   // Sensitive: base table only, never projected
   unit_price_inr: number;

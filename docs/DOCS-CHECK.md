@@ -19,7 +19,12 @@ These are the results of checking CLAUDE.md against the official AgentCore pages
    **Fix:** the sanitizer builds the request from an allowlist instead of stripping a denylist.
 8. **The server already rejects `toolUse` blocks, but `toolResult` is the live risk.** A `toolResult` is accepted when it answers a pending inline handoff in the same session. The sanitizer must refuse client-supplied `toolResult`. Only the backend's post-confirm path may send one.
 9. **For Cedar to see `role` and `pharmacy_id`, the Gateway needs JWT inbound auth.** Claims become `OAuthUser` tags (`principal.hasTag` / `getTag`). Cognito *access* tokens don't include custom attributes by default, so a pre-token-generation trigger is needed.
-   **VERIFY:** whether the harness forwards the end user's JWT to an `agentcore_gateway` tool. The security page says identity is threaded through for Bearer JWT inbound, but doesn't say which claims reach Gateway policy. If it doesn't, `list_holds` needs a fallback (Gateway interceptor, or a Sessions lookup in the Lambda).
+   **RESOLVED (2026-11-26) by design.** Harness → Gateway outbound auth has three options: `awsIam`, `none` and `oauth`.
+   - `awsIam` "SigV4-sign[s] requests using the agent's execution role".
+   - `oauth` rejects the `AUTHORIZATION_CODE` grant for this path.
+   - No page documents the end user's JWT or claims reaching the Gateway or Cedar.
+
+   So we use **two gateways** (see ARCHITECTURE.md). The model's gateway serves only `search_inventory`. `list_holds` and `create_hold` are inline functions that the UI backend runs on a JWT-authorised User Gateway with the person's own token.
 10. **Cedar specifics for `policies/`:**
     - Action names are `AgentCore::Action::"<Target>___<tool>"`.
     - The resource must be the specific `AgentCore::Gateway::"<arn>"`, so policy files need an ARN placeholder filled at deploy.
@@ -48,3 +53,17 @@ These are the results of checking CLAUDE.md against the official AgentCore pages
 - [Policy common patterns](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-common-patterns.md)
 - [Example policies: principal](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/example-policies-principal.html)
 - [GatewayPolicyEngineConfiguration API](https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_GatewayPolicyEngineConfiguration.html)
+
+## Tools stack checks (2026-11-26, CDK 2.278 + AWS docs)
+
+13. **Tool name separator is `___`.** The Cedar example in the AWS docs uses `RefundTool___process_refund`. The CDK README text says `__`, which is wrong.
+14. **Header propagation works on Lambda targets.** Propagated headers arrive in `clientContext.custom.bedrockAgentCorePropagatedHeaders` as a nested object by default. Constraints on header names:
+    - `Authorization` can't be allow-listed.
+    - Names must match `^[a-zA-Z0-9_-]+$`.
+    - `X-Amzn-*` is prohibited.
+
+    `x-rxgrid-user-token` is fine. The CDK L2 Lambda target has no `metadataConfiguration`, so it is set on the L1 ([gateway-headers](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-headers.html)).
+15. **Same-account Lambda targets need only an identity policy on the gateway role.** A resource-based policy is for cross-account only ([gateway-prerequisites-permissions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-prerequisites-permissions.html)).
+16. **DynamoDB transactions are authorised per item action.** `TransactWriteItems` needs `PutItem` and `UpdateItem`; there is no separate IAM action. `dynamodb:EnclosingOperation` can restrict those actions to transactions ([transaction-apis-iam](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html)).
+17. **Cedar types from the tool schema:** JSON `integer` maps to `Long`, `string` to `String`, and `number` to `Decimal`. `required` decides which `context.input` fields always exist. The IAM principal is `AgentCore::IamEntity` (`id` = caller ARN). The JWT principal is `AgentCore::OAuthUser` (claims as tags) ([policy-schema-constraints](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-schema-constraints.md)).
+18. **Inline tool schemas support only `type`, `description`, `items`, `properties` and `required`.** That holds for both CDK `SchemaDefinition` and CFN, so there are no enum or min/max constraints.
