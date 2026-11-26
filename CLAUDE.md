@@ -51,6 +51,9 @@ EDGE CASES: ambiguous drug → ask; substitutes only same salt+strength and flag
    - `before_invocation` → ApplyGuardrail on input.
    - `after_tool_call` → ApplyGuardrail on the tool result (indirect injection). A deny keeps the result and stops the run, so rotate the session after `hook_stopped`.
    - Hook payloads carry no JWT claims, only `sessionId`, so hooks look up identity in `Sessions`.
+   - Context truncation does not trigger `failureMode`, so every hook denies truncated context itself. Configure `failureMode: "deny"` on all hooks.
+   - `before_tool_call` also enforces a tool allowlist, so built-ins are denied even if `allowedTools` were wrong.
+   - Two guardrails, both **CLASSIC tier** (STANDARD needs cross-Region inference, which the SCP blocks): `rxgrid-input` (dosing topic, prompt attack, content filters) and `rxgrid-tool-result` (prompt attack only, applied to tool output as `INPUT`).
 7. **Daily cap**: the authoritative check is ONE DynamoDB transaction in create-hold (Holds Put + DailyUsage conditional Update), so split or parallel requests can't pass it. The `before_tool_call` hook adds an early deny.
 8. **Inline functions**:
    - `create_hold`: the UI shows a Confirm dialog, then the backend calls the User Gateway with the person's token.

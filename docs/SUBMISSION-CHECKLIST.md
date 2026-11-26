@@ -7,9 +7,9 @@ Status as of 2026-11-26: ✅ done · 🟡 partly done · ⬜ not started.
 
 The job: find a medicine in partner pharmacies and place a hold request within limits, for a human to confirm.
 
-- 🟡 Data, auth and tools stacks written and synthesized (`RxGrid-Data`, `RxGrid-Auth`, `RxGrid-Tools`). **Not deployed.**
+- 🟡 Data, auth, tools and hooks stacks written and synthesized (`RxGrid-Data`, `RxGrid-Auth`, `RxGrid-Tools`, `RxGrid-Hooks`). **Not deployed.**
 - ⬜ Harness defined (AgentCore CLI): model, system prompt, `allowedTools` = `search_inventory` + inline `create_hold`, `list_holds` (never `*`, never omitted)
-- ⬜ Hooks stack: `before_invocation`, `before_tool_call`, `after_tool_call` Lambdas + Guardrail
+- 🟡 Hooks stack: `input-guard`, `tool-cap`, `result-guard` Lambdas + 2 CLASSIC guardrails. Written, unit-tested and synthesized (`RxGrid-Hooks`). **Not deployed.**
 - ⬜ Sanitizer API (InvokeHarness allowlist, `Sessions` row, no client `toolResult`)
 - ⬜ Next.js UI: chat + Confirm dialog + client-side output guardrail
 - ⬜ Deploy (ask first: billable) → seed data (`npm run seed`) + test users (`npm run seed:users`)
@@ -61,9 +61,9 @@ The project must cover each of these:
 
 ## 6. Repo/demo link + at least one screenshot of the agent running [REQ]
 
-- 🟡 Repo exists: `github.com/sudipta02/rxgrid-agent`. **Visibility not checked yet.** It must be **public** at submission.
-- ⬜ Initial commit pushed. Only a local "save changes" commit exists so far.
-- ✅ `LICENSE`: MIT (OSI-approved). Added 2026-11-26; not committed yet.
+- ✅ Repo is public: `github.com/sudipta02/rxgrid-agent`. Confirmed 2026-11-26. Keep it public through judging.
+- ✅ Work pushed to `master` (`a9bd02b`, `8e45817`).
+- ✅ `LICENSE`: MIT (OSI-approved), committed and pushed.
 - ⬜ README: what it is, the architecture, how to deploy and seed, and links to RULES, ARCHITECTURE, results and BREAKS
 - ⬜ Screenshots in `docs/screenshots/` (empty now), at least one of the **agent running**. Useful ones:
   - chat with search results

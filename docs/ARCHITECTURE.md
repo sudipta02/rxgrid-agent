@@ -78,3 +78,27 @@ Synthesized, not deployed. The policy engines are attached in **LOG_ONLY**: Ceda
 1. Read the generated Cedar schema for each deployed gateway.
 2. Check the action names, the `OAuthUser` tag types, `qty` as `Long`, and the `IamEntity` `principal.id` format, then narrow the Agent Gateway permit to the harness role.
 3. Replay the stress test in LOG_ONLY.
+
+## Hooks stack (`infra/lib/hooks-stack.ts`)
+
+Synthesized, not deployed. The harness execution role invokes the hooks synchronously. Configure every hook with `failureMode: "deny"`: the stack output `HarnessHooksConfig` is the ready-made `hooks` list, with a 10 s timeout.
+
+| Hook | Event | Denies when | IAM (only these) |
+|---|---|---|---|
+| `input-guard` | `before_invocation` | Context truncated. Session unknown/expired (didn't come through the sanitizer). A message isn't role `user`. A block isn't `text`/`toolResult`. The **input guardrail** intervenes. | `GetItem` Sessions; `ApplyGuardrail` on `rxgrid-input` |
+| `tool-cap` | `before_tool_call` | Tool not on the allowlist (`create_hold`/`list_holds` as `inline_function`, `*search_inventory` as `agentcore_gateway`), so `shell` and other built-ins are denied even if `allowedTools` were wrong. For inline calls: `pharmacy_id` ≠ session pharmacy. For `create_hold`: qty not 1–50, H1/X for a non-pharmacist, or today's units or hold count would pass the cap. | `GetItem` Sessions and DailyUsage |
+| `result-guard` | `after_tool_call` | Result truncated, or the **tool-result guardrail** flags any string in it (JSON-encoded strings are unpacked first) | `ApplyGuardrail` on `rxgrid-tool-result` |
+
+**Guardrails**, both on the CLASSIC tier. The STANDARD tier requires cross-Region inference, which the project SCP denies.
+- **`rxgrid-input`:**
+  - `DosingAdvice` denied topic (R1)
+  - `PROMPT_ATTACK` HIGH
+  - hate, insults, sexual and violence at MEDIUM
+  - misconduct at LOW, so requests for Schedule X stock aren't flagged
+- **`rxgrid-tool-result`:** `PROMPT_ATTACK` HIGH only, so stock rows aren't judged against the dosing topic.
+- **Source:** tool output is sent as `INPUT`, the only source on which prompt-attack detection runs.
+- **Versions:** each guardrail has a pinned numbered version, and its description carries a config hash, so a change publishes a new version.
+
+**Not checked by the hooks, by design:**
+- `tool-cap` doesn't check the ₹ cap. It would need the stored price, and the price in the model's input isn't trusted. The create-hold transaction is authoritative for every limit.
+- An `after_tool_call` deny keeps the result in session history, so the sanitizer must start a new session after `hook_stopped`.

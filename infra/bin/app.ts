@@ -2,6 +2,7 @@ import { App } from "aws-cdk-lib";
 import { DataStack } from "../lib/data-stack.js";
 import { AuthStack } from "../lib/auth-stack.js";
 import { ToolsStack } from "../lib/tools-stack.js";
+import { HooksStack } from "../lib/hooks-stack.js";
 
 const app = new App();
 
@@ -28,4 +29,11 @@ new ToolsStack(app, "RxGrid-Tools", {
   userClients: [auth.webClient, auth.stressTestClient],
 });
 
-// Next stacks: Hooks, Sanitizer API. The harness itself is defined via the AgentCore CLI.
+new HooksStack(app, "RxGrid-Hooks", {
+  env,
+  description: "RxGrid stock-transfer agent: harness lifecycle-hook Lambdas and Bedrock Guardrails",
+  sessions: data.sessions,
+  dailyUsage: data.dailyUsage,
+});
+
+// Next stack: Sanitizer API. The harness itself is defined via the AgentCore CLI.
