@@ -3,6 +3,8 @@ import { DataStack } from "../lib/data-stack.js";
 import { AuthStack } from "../lib/auth-stack.js";
 import { ToolsStack } from "../lib/tools-stack.js";
 import { HooksStack } from "../lib/hooks-stack.js";
+import { SanitizerStack } from "../lib/sanitizer-stack.js";
+import { TARGETS, gatewayToolName } from "../lib/tool-schemas.js";
 
 const app = new App();
 
@@ -19,7 +21,7 @@ const auth = new AuthStack(app, "RxGrid-Auth", {
   description: "RxGrid stock-transfer agent: Cognito users, groups and token claims",
 });
 
-new ToolsStack(app, "RxGrid-Tools", {
+const tools = new ToolsStack(app, "RxGrid-Tools", {
   env,
   description: "RxGrid stock-transfer agent: tool Lambdas, Agent and User AgentCore Gateways, Cedar policy engines",
   inventory: data.inventory,
@@ -36,4 +38,15 @@ new HooksStack(app, "RxGrid-Hooks", {
   dailyUsage: data.dailyUsage,
 });
 
-// Next stack: Sanitizer API. The harness itself is defined via the AgentCore CLI.
+new SanitizerStack(app, "RxGrid-Sanitizer", {
+  env,
+  description: "RxGrid stock-transfer agent: sanitizer API (only path from the browser to the harness)",
+  sessions: data.sessions,
+  userPool: auth.userPool,
+  userClients: [auth.webClient, auth.stressTestClient],
+  userGatewayUrl: tools.userGateway.gatewayUrl!,
+  createHoldTool: gatewayToolName(TARGETS.createHold),
+  listHoldsTool: gatewayToolName(TARGETS.listHolds),
+});
+
+// The harness itself is defined next (AgentCore CLI or AWS::BedrockAgentCore::Harness).

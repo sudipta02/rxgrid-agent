@@ -16,7 +16,7 @@ export const getSession: GetSession = async (sessionId) => {
   if (!sessionId) return undefined;
   const res = await doc.send(new GetCommand({ TableName: TABLES.sessions, Key: { session_id: sessionId } }));
   const item = res.Item as SessionItem | undefined;
-  if (!item) return undefined;
+  if (!item || item.revoked) return undefined;
   if (typeof item.ttl === "number" && item.ttl * 1000 < Date.now()) return undefined;
   if (!PHARMACY_ID_PATTERN.test(String(item.pharmacy_id))) return undefined;
   if (item.role !== "staff" && item.role !== "pharmacist") return undefined;

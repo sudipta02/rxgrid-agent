@@ -30,8 +30,9 @@ EDGE CASES: ambiguous drug → ask; substitutes only same salt+strength and flag
    - `role` = group membership (admin-only).
    - `pharmacy_id` = `custom:pharmacy_id`, which no app client can write. CDK makes all attributes writable unless `writeAttributes` is set explicitly.
    - Fail closed: no valid pharmacy means no token.
-2. **Sanitizer API** in front of InvokeHarness.
-   - Builds the request from an allowlist (message text + server-held session ID) rather than stripping a denylist. Per-call overrides include `tools`, `skills`, `allowedTools`, and `model` (`modelId`, `apiBase`, `additionalParams`).
+2. **Sanitizer API** in front of InvokeHarness (REST API + Cognito authorizer on access tokens + streaming Lambda, NDJSON; `lambdas/sanitizer/`).
+   - The harness has JWT inbound auth, so the sanitizer calls `POST /harnesses/invoke` over HTTPS with the person's own bearer token. The JS SDK only does SigV4, which a JWT harness rejects.
+   - Builds the request from an allowlist (message text + server-held session ID + pinned `allowedTools`) rather than stripping a denylist. Unknown body fields are refused with 400. Per-call overrides it never forwards: `tools`, `skills`, `model` (`modelId`, `apiBase`, `additionalParams`), `systemPrompt`, `actorId`, `maxIterations`, `maxTokens`, `timeoutSeconds`, `runtimeUserId`, `qualifier`.
    - Never forwards a client-sent `toolResult`; only the backend's post-confirm path sends one. The server already rejects `toolUse` blocks.
 3. **`allowedTools`** lists only `search_inventory` plus the inline `create_hold` and `list_holds`.
    - Never `["*"]` and never omitted: both resolve to the built-ins, including `shell` and file read/write.

@@ -29,8 +29,9 @@ import {
   type HookPayload,
 } from "../../shared/hooks.js";
 
-/** Model-facing names of the harness inline functions. Must match the harness config. */
-export const INLINE_TOOLS = { createHold: "create_hold", listHolds: "list_holds" } as const;
+import { INLINE_TOOLS } from "../../shared/tools.js";
+
+export { INLINE_TOOLS };
 export const SEARCH_TOOL_SUFFIX = "search_inventory";
 
 export interface ToolCallContext {

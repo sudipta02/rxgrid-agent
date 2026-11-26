@@ -233,4 +233,30 @@ export interface SessionItem {
   sub: string;
   created_at: string;
   ttl: number;
+  /**
+   * Set after a hook stopped the invocation (hook_stopped): the poisoned tool result stays in
+   * the harness session history, so the session is never used again. Hooks treat a revoked
+   * session as missing.
+   */
+  revoked?: boolean;
+  /**
+   * The create_hold call waiting for a human Confirm/Decline. Written by the sanitizer from
+   * the harness stream, never from the client. Cleared with a conditional update when
+   * claimed, so a confirm runs at most once.
+   */
+  pending?: PendingHold;
 }
+
+export interface PendingHold {
+  tool_use_id: string;
+  input: Record<string, unknown>;
+  /**
+   * Every inline call handed off in the same turn, in stream order (includes tool_use_id).
+   * On confirm each gets a toolResult in this order; all but the hold get an error result.
+   */
+  handoff_tool_use_ids: string[];
+  created_at: string;
+}
+
+/** Sessions expire after this many seconds (Cognito access tokens last 60 minutes). */
+export const SESSION_TTL_SECONDS = 2 * 60 * 60;

@@ -102,3 +102,35 @@ Synthesized, not deployed. The harness execution role invokes the hooks synchron
 **Not checked by the hooks, by design:**
 - `tool-cap` doesn't check the ₹ cap. It would need the stored price, and the price in the model's input isn't trusted. The create-hold transaction is authoritative for every limit.
 - An `after_tool_call` deny keeps the result in session history, so the sanitizer must start a new session after `hook_stopped`.
+
+## Sanitizer API (`infra/lib/sanitizer-stack.ts`, `lambdas/sanitizer/`)
+
+Synthesized, not deployed. It is the only path from a browser to the harness.
+
+```
+browser ──Bearer <access token>──► API Gateway REST (Regional, Cognito authorizer, access-token scope,
+                                    throttle 5 rps / burst 10)
+          ──► sanitizer Lambda (streaming, NDJSON)
+                ├─ Sessions table (GetItem/PutItem/UpdateItem only)
+                ├─ InvokeHarness over HTTPS with the SAME bearer token (JWT harness; no IAM)
+                └─ User Gateway tools/call with the SAME token (Authorization + x-rxgrid-user-token)
+```
+
+| Route | Body (anything else → 400 `UNEXPECTED_FIELDS`) | Does |
+|---|---|---|
+| `POST /sessions` | none | Creates `rx-<uuid>`. Writes `Sessions` {pharmacy_id, role, sub, ttl 2 h} from the verified token. The hooks read this row. |
+| `POST /chat` | `sessionId`, `text` (≤ 2,000 chars) | Session must match the token's `sub`, pharmacy and role. Refused while a hold is pending. Sends **only** `{messages: [user text], allowedTools: <pinned>}`. |
+| `POST /confirm` | `sessionId`, `toolUseId`, `approve` | **Claims** the pending hold with a conditional update, so it runs once. On approve, calls the User Gateway `create_hold`. Sends the `toolResult` back to the harness. |
+
+**Override allowlist.** The harness accepts these per-call overrides: `tools`, `skills`, `model` (incl. `additionalParams`, `apiBase`, `modelId`), `systemPrompt`, `allowedTools`, `actorId`, `maxIterations`, `maxTokens`, `timeoutSeconds`, `runtimeUserId`, `qualifier` and the trace headers. None of them comes from the client. The sanitizer sets `allowedTools` itself on every call (`lambdas/shared/tools.ts`).
+
+**Inline functions:**
+- **When:** handled only when the final `messageStop` is `tool_use`.
+- **`list_holds`:** runs straight away with the person's token, and the loop resumes. A turn is capped at 4 rounds.
+- **First `create_hold`:** stored as `Sessions.pending` and sent to the UI as a `confirm` event.
+- **Other calls in the same handoff:** answered with `NOT_RUN` after the confirm. One hold at a time, which also blocks splitting.
+- **`toolResult`s** are built only here, never from client input.
+
+**`hook_stopped`:** the session is revoked (`revoked = true`; hooks treat it as missing) and a new session is issued in a `session` event. This matters because an `after_tool_call` deny leaves the poisoned result in the harness history.
+
+**UI events (NDJSON):** `accepted`, `session`, `text`, `tool`, `hook`, `confirm`, `hold_result`, `done`, `error`. `accepted` is sent as soon as validation passes, so the stream opens within API Gateway's 29 s first-byte limit. Validation failures before that point return a real 4xx status. Logs record decisions and sizes, never tokens or message text.

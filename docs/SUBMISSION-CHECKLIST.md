@@ -7,10 +7,10 @@ Status as of 2026-11-26: ✅ done · 🟡 partly done · ⬜ not started.
 
 The job: find a medicine in partner pharmacies and place a hold request within limits, for a human to confirm.
 
-- 🟡 Data, auth, tools and hooks stacks written and synthesized (`RxGrid-Data`, `RxGrid-Auth`, `RxGrid-Tools`, `RxGrid-Hooks`). **Not deployed.**
+- 🟡 Data, auth, tools, hooks and sanitizer stacks written and synthesized (`RxGrid-Data`, `-Auth`, `-Tools`, `-Hooks`, `-Sanitizer`). **Not deployed.**
 - ⬜ Harness defined (AgentCore CLI): model, system prompt, `allowedTools` = `search_inventory` + inline `create_hold`, `list_holds` (never `*`, never omitted)
 - 🟡 Hooks stack: `input-guard`, `tool-cap`, `result-guard` Lambdas + 2 CLASSIC guardrails. Written, unit-tested and synthesized (`RxGrid-Hooks`). **Not deployed.**
-- ⬜ Sanitizer API (InvokeHarness allowlist, `Sessions` row, no client `toolResult`)
+- 🟡 Sanitizer API: REST + Cognito + streaming Lambda (`/sessions`, `/chat`, `/confirm`). Written, unit-tested and synthesized (`RxGrid-Sanitizer`). **Not deployed**; needs `-c harnessArn=…`.
 - ⬜ Next.js UI: chat + Confirm dialog + client-side output guardrail
 - ⬜ Deploy (ask first: billable) → seed data (`npm run seed`) + test users (`npm run seed:users`)
 - ⬜ End-to-end run: search → ambiguous ask → hold → Confirm → hold appears in `list_holds`
